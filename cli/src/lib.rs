@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, create_dir, remove_dir_all, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -376,6 +376,7 @@ pub enum Command {
         #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
+    Coverage,
 }
 
 #[derive(Debug, Parser)]
@@ -953,6 +954,7 @@ fn process_command(opts: Opts) -> Result<()> {
             );
             Ok(())
         }
+        Command::Coverage => coverage(&opts.cfg_override),
     }
 }
 
@@ -4878,6 +4880,108 @@ fn strip_workspace_prefix(absolute_path: String) -> String {
 /// Create a new [`RpcClient`] with `confirmed` commitment level instead of the default(finalized).
 fn create_client<U: ToString>(url: U) -> RpcClient {
     RpcClient::new_with_commitment(url, CommitmentConfig::confirmed())
+}
+
+fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
+    let cfg = Config::discover(cfg_override)?.expect("Not in workspace.");
+    let cfg_parent = cfg.path().parent().expect("Invalid Anchor.toml");
+
+    let artifacts_dir_name = "anchor-test-code-coverage-artifacts";
+    let artifacts_dir_path = cfg_parent.join(artifacts_dir_name);
+
+    // Remove old artifacts.
+    let _ = remove_dir_all(&artifacts_dir_path);
+    create_dir(&artifacts_dir_path)?;
+
+    // First, build the programs for SBF.
+    let cmd_build_sbf = ["anchor", "build"];
+    entry(Opts::parse_from(cmd_build_sbf))?;
+
+    // Next, build the programs as native ones.
+    // NB: for coverage to work we need nightly from now on.
+    std::env::set_var("RUSTUP_TOOLCHAIN", "nightly");
+    std::env::set_var(
+        "LLVM_PROFILE_FILE",
+        artifacts_dir_path.join("%p-%m.profraw"),
+    );
+    // Append the coverage options to RUSTFLAGS and then remove them.
+    let rustflags = std::env::var("RUSTFLAGS").unwrap_or("".into());
+    std::env::set_var(
+        "RUSTFLAGS",
+        format!(
+            "{}{}--emit=llvm-ir -Z coverage-options=mcdc -C instrument-coverage",
+            rustflags,
+            if rustflags.is_empty() { "" } else { " " }
+        ),
+    );
+    let cmd_build_native = ["anchor", "build", "--arch", "native"];
+    entry(Opts::parse_from(cmd_build_native))?;
+    std::env::set_var("RUSTFLAGS", rustflags);
+
+    // Run the tests to gather the coverage statistics.
+    let cmd_tests = ["anchor", "test"];
+    entry(Opts::parse_from(cmd_tests))?;
+
+    // Merge the coverage statistics.
+    let output = std::process::Command::new("llvm-profdata")
+        .arg("merge")
+        .arg(&artifacts_dir_path)
+        .arg("-o")
+        .arg(artifacts_dir_path.join("merged.profdata"))
+        .output()?;
+    if !output.status.success() {
+        std::io::stderr().write_all(&output.stderr)?;
+        return Err(anyhow!("Failed to merge profdata."));
+    }
+
+    // Generate the code coverage output.
+    let output = std::process::Command::new("llvm-cov")
+        .arg("show")
+        .args(
+            std::fs::read_dir(cfg_parent.join("target/debug"))?
+                .into_iter()
+                .filter(|e| e.is_ok())
+                .map(|e| {
+                    let e = e.unwrap();
+                    let path = e.path();
+                    let ext = path.extension().and_then(|s| s.to_str());
+                    if ext == Some("so") || ext == Some("dylib") {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .filter(|e| e.is_some())
+                .map(|e| e.unwrap().display().to_string()),
+        )
+        .arg(format!(
+            "-instr-profile={}/merged.profdata",
+            artifacts_dir_path.display().to_string()
+        ))
+        .arg("programs/")
+        .arg("--format=html")
+        .arg(format!(
+            "-output-dir={}/htmlcov",
+            artifacts_dir_path.display().to_string()
+        ))
+        .arg("--show-instantiations=false")
+        .arg("--show-instantiation-summary=false")
+        .output()?;
+    if !output.status.success() {
+        std::io::stderr().write_all(&output.stderr)?;
+        return Err(anyhow!("Failed to generate coverage output."));
+    }
+
+    // Open the html.
+    let output = std::process::Command::new("open")
+        .arg(artifacts_dir_path.join("htmlcov/index.html"))
+        .output()?;
+    if !output.status.success() {
+        std::io::stderr().write_all(&output.stderr)?;
+        return Err(anyhow!("Failed to open the html coverage output."));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
