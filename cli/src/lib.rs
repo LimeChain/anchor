@@ -4974,6 +4974,29 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
         return Err(anyhow!("Failed to generate coverage output."));
     }
 
+    // Override the output a little bit.
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open(artifacts_dir_path.join("htmlcov").join("style.css"))
+    {
+        let css_style = r#"
+            .red {
+              background-color: rgb(255, 0, 0);
+            }
+            tr:has(> td >a:target), tr:has(> td.uncovered-line.selected) {
+              background-color: #8884 important;
+            }
+            tr:has(> td.uncovered-line) {
+              background-color: #ff0000 !important;
+            }
+            tr:has(> td.covered-line) {
+              background-color: #00ff00 !important;
+            }
+            "#;
+        let _ = file.write_all(css_style.as_bytes());
+    }
+
     // Open the html.
     let output = std::process::Command::new("open")
         .arg(artifacts_dir_path.join("htmlcov/index.html"))
