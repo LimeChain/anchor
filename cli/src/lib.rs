@@ -376,6 +376,8 @@ pub enum Command {
         #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Generate code coverage statistics.
+    #[clap(name = "coverage")]
     Coverage,
 }
 
