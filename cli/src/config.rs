@@ -470,6 +470,7 @@ pub enum BootstrapMode {
 pub enum ProgramArch {
     Bpf,
     Sbf,
+    #[clap(hide = true)]
     Native,
 }
 impl ProgramArch {
