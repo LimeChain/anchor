@@ -4922,7 +4922,7 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     std::env::set_var(
         "RUSTFLAGS",
         format!(
-            "{}{}--emit=llvm-ir -Z coverage-options=mcdc -C instrument-coverage",
+            "{}{}-Z coverage-options=mcdc -C instrument-coverage",
             rustflags,
             if rustflags.is_empty() { "" } else { " " }
         ),
