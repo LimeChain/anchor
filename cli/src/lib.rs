@@ -4895,6 +4895,17 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     let _ = remove_dir_all(&artifacts_dir_path);
     create_dir(&artifacts_dir_path)?;
 
+    // Set some useful environment variables.
+    std::env::set_var(
+        "ANCHOR_TEST_CODE_COVERAGE_ARTIFACTS_DIR",
+        &artifacts_dir_path,
+    );
+    std::env::set_var(
+        "ANCHOR_TEST_CODE_COVERAGE_ARTIFACTS_EVENT_FILE",
+        artifacts_dir_path.join("events"),
+    );
+    std::env::set_var("ANCHOR_TEST_CODE_COVERAGE_REPORT_EVENTS", "true");
+
     // First, build the programs for SBF.
     let cmd_build_sbf = ["anchor", "build"];
     entry(Opts::parse_from(cmd_build_sbf))?;
@@ -4924,10 +4935,53 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     let cmd_tests = ["anchor", "test"];
     entry(Opts::parse_from(cmd_tests))?;
 
+    // Check event logs if litesvm is used and if so only then try to
+    // generate coverage statistics.
+    let do_stats = std::fs::read_dir(&artifacts_dir_path)?
+        .into_iter()
+        .filter(|e| e.is_ok())
+        .map(|e| e.unwrap().path())
+        .filter(|e| e.extension().map(|ext| ext == "log").unwrap_or(false))
+        .map(|event_file| -> Result<bool> {
+            let found = std::io::BufReader::new(std::fs::File::open(event_file)?)
+                .lines()
+                .into_iter()
+                .filter(|line| line.is_ok())
+                .map(|line| line.unwrap())
+                .find(|line| line.contains("litesvm=true"))
+                .map(|_| true);
+            Ok(found.unwrap_or(false))
+        })
+        .find(|e| e.is_ok())
+        .map(|e| e.unwrap())
+        .unwrap_or(false);
+
+    if do_stats == false {
+        return Err(anyhow!(
+            "Statistics can only be generated when using LiteSVM with code coverage setup."
+        ));
+    }
+
     // Merge the coverage statistics.
     let output = std::process::Command::new("llvm-profdata")
         .arg("merge")
-        .arg(&artifacts_dir_path)
+        .args(
+            std::fs::read_dir(&artifacts_dir_path)?
+                .into_iter()
+                .filter(|e| e.is_ok())
+                .map(|e| {
+                    let e = e.unwrap();
+                    let path = e.path();
+                    let ext = path.extension().and_then(|s| s.to_str());
+                    if ext == Some("profraw") {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .filter(|e| e.is_some())
+                .map(|e| e.unwrap().display().to_string()),
+        )
         .arg("-o")
         .arg(artifacts_dir_path.join("merged.profdata"))
         .output()?;
