@@ -5035,19 +5035,38 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
         .open(artifacts_dir_path.join("htmlcov").join("style.css"))
     {
         let css_style = r#"
-            .red {
-              background-color: rgb(255, 0, 0);
-            }
-            tr:has(> td >a:target), tr:has(> td.uncovered-line.selected) {
-              background-color: #8884 important;
-            }
-            tr:has(> td.uncovered-line) {
-              background-color: #ff0000 !important;
-            }
-            tr:has(> td.covered-line) {
-              background-color: #00ff00 !important;
-            }
-            "#;
+.red {
+  background-color: rgb(255, 0, 0);
+}
+tr:has(> td > a:target),
+tr:has(> td.uncovered-line.selected) {
+  background-color: rgb(255, 255, 0) !important;
+}
+tr:has(> td.uncovered-line) {
+  background-color: #ff0000 !important;
+}
+tr:has(> td.covered-line) {
+  background-color: #00ff00 !important;
+}
+.uncovered-line.selected {
+  color: rgb(255, 255, 0);
+  font-weight: bold;
+}
+.region.red.selected {
+  background-color: rgb(255, 255, 0);
+  font-weight: bold;
+}
+.branch.red.selected {
+  background-color: rgb(255, 255, 0);
+  font-weight: bold;
+}
+.uncovered-line pre {
+  color: transparent;
+}
+.covered-line pre {
+  color: transparent;
+}
+"#;
         let _ = file.write_all(css_style.as_bytes());
     }
 
