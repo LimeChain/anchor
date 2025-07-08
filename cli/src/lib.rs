@@ -4939,21 +4939,20 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     // generate coverage statistics.
     let do_stats = std::fs::read_dir(&artifacts_dir_path)?
         .into_iter()
-        .filter(|e| e.is_ok())
-        .map(|e| e.unwrap().path())
+        .flat_map(|e| e)
+        .map(|e| e.path())
         .filter(|e| e.extension().map(|ext| ext == "log").unwrap_or(false))
         .map(|event_file| -> Result<bool> {
             let found = std::io::BufReader::new(std::fs::File::open(event_file)?)
                 .lines()
                 .into_iter()
-                .filter(|line| line.is_ok())
-                .map(|line| line.unwrap())
+                .flat_map(|line| line)
                 .find(|line| line.contains("litesvm=true"))
                 .map(|_| true);
             Ok(found.unwrap_or(false))
         })
-        .find(|e| e.is_ok())
-        .map(|e| e.unwrap())
+        .flat_map(|e| e)
+        .find(|e| *e == true)
         .unwrap_or(false);
 
     if do_stats == false {
@@ -4968,9 +4967,8 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
         .args(
             std::fs::read_dir(&artifacts_dir_path)?
                 .into_iter()
-                .filter(|e| e.is_ok())
+                .flat_map(|e| e)
                 .map(|e| {
-                    let e = e.unwrap();
                     let path = e.path();
                     let ext = path.extension().and_then(|s| s.to_str());
                     if ext == Some("profraw") {
@@ -4979,8 +4977,8 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
                         None
                     }
                 })
-                .filter(|e| e.is_some())
-                .map(|e| e.unwrap().display().to_string()),
+                .filter_map(|e| e)
+                .map(|e| e.display().to_string()),
         )
         .arg("-o")
         .arg(artifacts_dir_path.join("merged.profdata"))
@@ -4996,9 +4994,8 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
         .args(
             std::fs::read_dir(cfg_parent.join("target/debug"))?
                 .into_iter()
-                .filter(|e| e.is_ok())
+                .flat_map(|e| e)
                 .map(|e| {
-                    let e = e.unwrap();
                     let path = e.path();
                     let ext = path.extension().and_then(|s| s.to_str());
                     if ext == Some("so") || ext == Some("dylib") {
@@ -5007,8 +5004,8 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
                         None
                     }
                 })
-                .filter(|e| e.is_some())
-                .map(|e| e.unwrap().display().to_string()),
+                .filter_map(|e| e)
+                .map(|e| e.display().to_string()),
         )
         .arg(format!(
             "-instr-profile={}/merged.profdata",
