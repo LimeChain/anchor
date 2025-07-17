@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs::{self, create_dir, remove_dir_all, File};
+use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -4892,8 +4892,8 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     let artifacts_dir_path = cfg_parent.join(artifacts_dir_name);
 
     // Remove old artifacts.
-    let _ = remove_dir_all(&artifacts_dir_path);
-    create_dir(&artifacts_dir_path)?;
+    let _ = fs::remove_dir_all(&artifacts_dir_path);
+    fs::create_dir(&artifacts_dir_path)?;
 
     // Set some useful environment variables.
     std::env::set_var(
