@@ -5033,8 +5033,13 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     {
         let css_style = r#"
 .red {
+  background-color: #d73a49BB !important;
+}
+
+td.uncovered-line + td.code .region {
   background-color: transparent !important;
 }
+
 tr:has(> td > a:target),
 tr:has(> td.uncovered-line.selected) {
   background-color: #f4e04d !important;
