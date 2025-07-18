@@ -5033,35 +5033,42 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     {
         let css_style = r#"
 .red {
-  background-color: rgb(255, 0, 0);
+  background-color: transparent !important;
 }
 tr:has(> td > a:target),
 tr:has(> td.uncovered-line.selected) {
-  background-color: rgb(255, 255, 0) !important;
+  background-color: #f4e04d !important;
+  color: black !important;
 }
 tr:has(> td.uncovered-line) {
-  background-color: #ff0000 !important;
+  background-color: #d73a4980 !important;
 }
 tr:has(> td.covered-line) {
-  background-color: #00ff00 !important;
+  background-color: #28a74580 !important;
 }
 .uncovered-line.selected {
-  color: rgb(255, 255, 0);
+  color: #f4e04d !important;
   font-weight: bold;
+  color: black;
 }
 .region.red.selected {
-  background-color: rgb(255, 255, 0);
+  background-color: #f4e04d !important;
   font-weight: bold;
+  color: black !important;
 }
 .branch.red.selected {
-  background-color: rgb(255, 255, 0);
+  background-color: #f4e04d !important;
   font-weight: bold;
+  color: black !important;
 }
 .uncovered-line pre {
   color: transparent;
 }
 .covered-line pre {
   color: transparent;
+}
+tbody tr td:nth-child(2n) {
+  display: none;
 }
 "#;
         let _ = file.write_all(css_style.as_bytes());
