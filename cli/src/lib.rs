@@ -4962,34 +4962,36 @@ fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
     }
 
     // Merge the coverage statistics.
-    let output = std::process::Command::new("llvm-profdata")
-        .arg("merge")
-        .args(
-            std::fs::read_dir(&artifacts_dir_path)?
-                .into_iter()
-                .flat_map(|e| e)
-                .map(|e| {
-                    let path = e.path();
-                    let ext = path.extension().and_then(|s| s.to_str());
-                    if ext == Some("profraw") {
-                        Some(path)
-                    } else {
-                        None
-                    }
-                })
-                .filter_map(|e| e)
-                .map(|e| e.display().to_string()),
-        )
-        .arg("-o")
-        .arg(artifacts_dir_path.join("merged.profdata"))
-        .output()?;
+    let output = std::process::Command::new(
+        std::env::var("LLVM_PROFDATA").unwrap_or("llvm-profdata".into()),
+    )
+    .arg("merge")
+    .args(
+        std::fs::read_dir(&artifacts_dir_path)?
+            .into_iter()
+            .flat_map(|e| e)
+            .map(|e| {
+                let path = e.path();
+                let ext = path.extension().and_then(|s| s.to_str());
+                if ext == Some("profraw") {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .filter_map(|e| e)
+            .map(|e| e.display().to_string()),
+    )
+    .arg("-o")
+    .arg(artifacts_dir_path.join("merged.profdata"))
+    .output()?;
     if !output.status.success() {
         std::io::stderr().write_all(&output.stderr)?;
         return Err(anyhow!("Failed to merge profdata."));
     }
 
     // Generate the code coverage output.
-    let output = std::process::Command::new("llvm-cov")
+    let output = std::process::Command::new(std::env::var("LLVM_COV").unwrap_or("llvm-cov".into()))
         .arg("show")
         .args(
             std::fs::read_dir(cfg_parent.join("target/debug"))?
