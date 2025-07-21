@@ -5082,7 +5082,7 @@ tbody tr td:nth-child(2n) {
     }
 
     // Open the html.
-    let output = std::process::Command::new("open")
+    let output = std::process::Command::new(std::env::var("HTML_VIEWER").unwrap_or("open".into()))
         .arg(artifacts_dir_path.join("htmlcov/index.html"))
         .output()?;
     if !output.status.success() {
