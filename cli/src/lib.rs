@@ -362,6 +362,9 @@ pub enum Command {
         #[clap(value_enum)]
         shell: clap_complete::Shell,
     },
+    /// Generate code coverage statistics.
+    #[clap(name = "coverage")]
+    Coverage,
 }
 
 #[derive(Debug, Parser)]
@@ -932,6 +935,7 @@ fn process_command(opts: Opts) -> Result<()> {
             );
             Ok(())
         }
+        Command::Coverage => coverage(&opts.cfg_override),
     }
 }
 
@@ -4752,6 +4756,215 @@ fn strip_workspace_prefix(absolute_path: String) -> String {
 /// Create a new [`RpcClient`] with `confirmed` commitment level instead of the default(finalized).
 fn create_client<U: ToString>(url: U) -> RpcClient {
     RpcClient::new_with_commitment(url, CommitmentConfig::confirmed())
+}
+
+fn coverage(cfg_override: &ConfigOverride) -> Result<()> {
+    let cfg = Config::discover(cfg_override)?.expect("Not in workspace.");
+    let cfg_parent = cfg.path().parent().expect("Invalid Anchor.toml");
+
+    let artifacts_dir_name = "anchor-test-code-coverage-artifacts";
+    let artifacts_dir_path = cfg_parent.join(artifacts_dir_name);
+
+    // Remove old artifacts.
+    let _ = fs::remove_dir_all(&artifacts_dir_path);
+    fs::create_dir(&artifacts_dir_path)?;
+
+    // Set some useful environment variables.
+    std::env::set_var(
+        "ANCHOR_TEST_CODE_COVERAGE_ARTIFACTS_DIR",
+        &artifacts_dir_path,
+    );
+    std::env::set_var(
+        "ANCHOR_TEST_CODE_COVERAGE_ARTIFACTS_EVENT_FILE",
+        artifacts_dir_path.join("events"),
+    );
+    std::env::set_var("ANCHOR_TEST_CODE_COVERAGE_REPORT_EVENTS", "true");
+
+    // First, build the programs for SBF.
+    let cmd_build_sbf = ["anchor", "build"];
+    entry(Opts::parse_from(cmd_build_sbf))?;
+
+    // Next, build the programs as native ones.
+    // NB: for coverage to work we need nightly from now on.
+    std::env::set_var("RUSTUP_TOOLCHAIN", "nightly");
+    std::env::set_var(
+        "LLVM_PROFILE_FILE",
+        artifacts_dir_path.join("%p-%m.profraw"),
+    );
+    // Append the coverage options to RUSTFLAGS and then remove them.
+    let rustflags = std::env::var("RUSTFLAGS").unwrap_or("".into());
+    std::env::set_var(
+        "RUSTFLAGS",
+        format!(
+            "{}{}-Z coverage-options=mcdc -C instrument-coverage",
+            rustflags,
+            if rustflags.is_empty() { "" } else { " " }
+        ),
+    );
+    let cmd_build_native = ["anchor", "build", "--arch", "native"];
+    entry(Opts::parse_from(cmd_build_native))?;
+    std::env::set_var("RUSTFLAGS", rustflags);
+
+    // Run the tests to gather the coverage statistics.
+    let cmd_tests = ["anchor", "test"];
+    entry(Opts::parse_from(cmd_tests))?;
+
+    // Check event logs if litesvm is used and if so only then try to
+    // generate coverage statistics.
+    let do_stats = std::fs::read_dir(&artifacts_dir_path)?
+        .into_iter()
+        .flat_map(|e| e)
+        .map(|e| e.path())
+        .filter(|e| e.extension().map(|ext| ext == "log").unwrap_or(false))
+        .map(|event_file| -> Result<bool> {
+            let found = std::io::BufReader::new(std::fs::File::open(event_file)?)
+                .lines()
+                .into_iter()
+                .flat_map(|line| line)
+                .find(|line| line.contains("litesvm=true"))
+                .map(|_| true);
+            Ok(found.unwrap_or(false))
+        })
+        .flat_map(|e| e)
+        .find(|e| *e == true)
+        .unwrap_or(false);
+
+    if do_stats == false {
+        return Err(anyhow!(
+            "Statistics can only be generated when using LiteSVM with code coverage setup."
+        ));
+    }
+
+    // Merge the coverage statistics.
+    let output = std::process::Command::new(
+        std::env::var("LLVM_PROFDATA").unwrap_or("llvm-profdata".into()),
+    )
+    .arg("merge")
+    .args(
+        std::fs::read_dir(&artifacts_dir_path)?
+            .into_iter()
+            .flat_map(|e| e)
+            .map(|e| {
+                let path = e.path();
+                let ext = path.extension().and_then(|s| s.to_str());
+                if ext == Some("profraw") {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .filter_map(|e| e)
+            .map(|e| e.display().to_string()),
+    )
+    .arg("-o")
+    .arg(artifacts_dir_path.join("merged.profdata"))
+    .output()?;
+    if !output.status.success() {
+        std::io::stderr().write_all(&output.stderr)?;
+        return Err(anyhow!("Failed to merge profdata."));
+    }
+
+    // Generate the code coverage output.
+    let output = std::process::Command::new(std::env::var("LLVM_COV").unwrap_or("llvm-cov".into()))
+        .arg("show")
+        .args(
+            std::fs::read_dir(cfg_parent.join("target/debug"))?
+                .into_iter()
+                .flat_map(|e| e)
+                .map(|e| {
+                    let path = e.path();
+                    let ext = path.extension().and_then(|s| s.to_str());
+                    if ext == Some("so") || ext == Some("dylib") {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .filter_map(|e| e)
+                .map(|e| e.display().to_string()),
+        )
+        .arg(format!(
+            "-instr-profile={}/merged.profdata",
+            artifacts_dir_path.display().to_string()
+        ))
+        .arg("programs/")
+        .arg("--format=html")
+        .arg(format!(
+            "-output-dir={}/htmlcov",
+            artifacts_dir_path.display().to_string()
+        ))
+        .arg("--show-instantiations=false")
+        .arg("--show-instantiation-summary=false")
+        .output()?;
+    if !output.status.success() {
+        std::io::stderr().write_all(&output.stderr)?;
+        return Err(anyhow!("Failed to generate coverage output."));
+    }
+
+    // Override the output a little bit.
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .open(artifacts_dir_path.join("htmlcov").join("style.css"))
+    {
+        let css_style = r#"
+.red {
+  background-color: #d73a49BB !important;
+}
+
+td.uncovered-line + td.code .region {
+  background-color: transparent !important;
+}
+
+tr:has(> td > a:target),
+tr:has(> td.uncovered-line.selected) {
+  background-color: #f4e04d !important;
+  color: black !important;
+}
+tr:has(> td.uncovered-line) {
+  background-color: #d73a4980 !important;
+}
+tr:has(> td.covered-line) {
+  background-color: #28a74580 !important;
+}
+.uncovered-line.selected {
+  color: #f4e04d !important;
+  font-weight: bold;
+  color: black;
+}
+.region.red.selected {
+  background-color: #f4e04d !important;
+  font-weight: bold;
+  color: black !important;
+}
+.branch.red.selected {
+  background-color: #f4e04d !important;
+  font-weight: bold;
+  color: black !important;
+}
+.uncovered-line pre {
+  color: transparent;
+}
+.covered-line pre {
+  color: transparent;
+}
+tbody tr td:nth-child(2n) {
+  display: none;
+}
+"#;
+        let _ = file.write_all(css_style.as_bytes());
+    }
+
+    // Open the html.
+    let output = std::process::Command::new(std::env::var("HTML_VIEWER").unwrap_or("open".into()))
+        .arg(artifacts_dir_path.join("htmlcov/index.html"))
+        .output()?;
+    if !output.status.success() {
+        std::io::stderr().write_all(&output.stderr)?;
+        return Err(anyhow!("Failed to open the html coverage output."));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
